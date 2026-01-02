@@ -15,19 +15,13 @@ on:
 jobs:
   generate-device-tree:
     if: github.event.repository.owner.id == github.event.sender.id
-    runs-on: ubuntu-22.04  # 使用更稳定的Ubuntu版本
+    runs-on: ubuntu-latest
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.9'  # 使用稳定的Python版本
-        cache: 'pip'
-        
-    - name: Install system dependencies
+    - name: Set up environment
       run: |
         sudo apt-get update
         sudo apt-get install -y \
@@ -35,100 +29,40 @@ jobs:
           python3-pip \
           cpio \
           wget \
-          curl \
           zip \
-          unzip \
-          file \
-          git \
-          android-tools-fsutils  # 添加Android工具依赖
+          unzip
         
-    - name: Install TWRP generator with specific version
+    - name: Install TWRP generator
       run: |
-        pip3 install --upgrade pip
-        # 安装稳定版本的twrpdtgen，避免最新版可能的问题
-        pip3 install "twrpdtgen>=1.0.0,<2.0.0"
+        pip3 install --upgrade twrpdtgen
         
-        # 验证安装
-        python3 -c "import twrpdtgen; print('twrpdtgen导入成功')" || echo "导入失败"
-        which twrpdtgen || echo "命令未找到"
-        
-    - name: Download and validate recovery image
+    - name: Download recovery image
       run: |
-        echo "下载镜像: ${{ github.event.inputs.IMG_URL }}"
-        wget --timeout=60 --tries=3 -O recovery.img "${{ github.event.inputs.IMG_URL }}"
-        
-        # 验证文件
-        echo "文件信息:"
-        file recovery.img || echo "无法识别文件类型"
-        echo "文件大小: $(ls -lh recovery.img | awk '{print $5}')"
-        
-        # 检查文件是否为空
-        if [ ! -s recovery.img ]; then
-          echo "错误: 下载的镜像文件为空"
-          exit 1
-        fi
-        
-    - name: Generate device tree with error handling
+        wget -O recovery.img "${{ github.event.inputs.IMG_URL }}"
+        file recovery.img || true  # Display file info for debugging
+      
+    - name: Generate device tree
       run: |
-        set -e  # 遇到错误立即退出
-        
-        echo "开始生成设备树..."
         mkdir -p device_tree_output
-        
-        # 使用详细模式运行
-        python3 -m twrpdtgen --verbose -o device_tree_output recovery.img
-        
-        # 检查生成结果
-        if [ -d "device_tree_output" ] && [ "$(ls -A device_tree_output)" ]; then
-          echo "设备树生成成功!"
-          ls -la device_tree_output/
-        else
-          echo "错误: 设备树目录为空"
-          exit 1
-        fi
-        
-      continue-on-error: false  # 确保错误会停止工作流
+        python3 -m twrpdtgen \
+          -o device_tree_output \
+          recovery.img
         
     - name: Compress device tree
       run: |
-        if [ -d "device_tree_output" ] && [ "$(ls -A device_tree_output)" ]; then
-          cd device_tree_output
-          zip -r ../DeviceTree_${{ github.run_number }}.zip .
-          cd ..
-          echo "压缩完成: DeviceTree_${{ github.run_number }}.zip"
-          ls -lh DeviceTree_${{ github.run_number }}.zip
-        else
-          echo "错误: 设备树目录不存在或为空"
-          exit 1
-        fi
+        cd device_tree_output
+        zip -r ../DeviceTree_${{ github.run_number }}.zip .
+        cd ..
         
     - name: Create release with device tree
       uses: softprops/action-gh-release@v1
-      if: success()  # 只有前面步骤成功才创建发布
       with:
         files: DeviceTree_${{ github.run_number }}.zip
         name: TWRP_Device_Tree_${{ github.run_number }}
         tag_name: dt-${{ github.run_number }}
         body: |
-          自动生成的TWRP设备树
-          
-          构建运行: ${{ github.run_number }}
-          源镜像: ${{ github.event.inputs.IMG_URL }}
-          生成时间: $(date -u)
-          
-          使用说明:
-          1. 将此设备树放置在TWRP源码的device目录下
-          2. 根据设备实际情况调整配置
-          3. 使用lunch选择设备并编译
+          Automatically generated TWRP device tree
+          Build run: ${{ github.run_number }}
+          Source image: ${{ github.event.inputs.IMG_URL }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
-    - name: Upload workflow logs (on failure)
-      if: failure()
-      uses: actions/upload-artifact@v4
-      with:
-        name: workflow-logs-${{ github.run_number }}
-        path: |
-          *.log
-          device_tree_output/
-        retention-days: 1
