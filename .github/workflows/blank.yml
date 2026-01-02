@@ -30,39 +30,101 @@ jobs:
           cpio \
           wget \
           zip \
-          unzip
+          unzip \
+          file \
+          git
         
-    - name: Install TWRP generator
+    - name: Install TWRP generator and dependencies
       run: |
+        # 安装最新稳定版本的twrpdtgen
         pip3 install --upgrade twrpdtgen
+        # 安装AIK依赖
+        pip3 install git+https://github.com/sebaubuntu_libs/python-aik.git
         
-    - name: Download recovery image
+    - name: Download and validate recovery image
       run: |
         wget -O recovery.img "${{ github.event.inputs.IMG_URL }}"
-        file recovery.img || true  # Display file info for debugging
-      
-    - name: Generate device tree
+        # 验证镜像文件
+        file recovery.img
+        ls -la recovery.img
+        # 检查文件大小
+        echo "File size: $(stat -c%s recovery.img) bytes"
+        
+    - name: Pre-check image format
+      run: |
+        # 尝试使用file命令识别镜像类型
+        file recovery.img
+        # 如果是压缩文件，尝试解压
+        if file recovery.img | grep -q "gzip compressed"; then
+          echo "Image is gzipped, extracting..."
+          mv recovery.img recovery.img.gz
+          gunzip recovery.img.gz
+        fi
+        
+    - name: Clone AIK manually (备用方案)
+      run: |
+        git clone https://github.com/osm0sis/Android-Image-Kitchen.git AIK
+        chmod +x AIK/*.sh
+        
+    - name: Generate device tree with debug info
       run: |
         mkdir -p device_tree_output
-        python3 -m twrpdtgen \
-          -o device_tree_output \
-          recovery.img
+        # 设置详细日志
+        export PYTHONPATH=/home/runner/.local/lib/python3.12/site-packages:$PYTHONPATH
+        # 尝试生成设备树
+        python3 -m twrpdtgen --verbose -o device_tree_output recovery.img || echo "twrpdtgen failed, trying alternative approach"
         
-    - name: Compress device tree
+    - name: Alternative approach if twrpdtgen fails
+      if: failure()
       run: |
-        cd device_tree_output
-        zip -r ../DeviceTree_${{ github.run_number }}.zip .
-        cd ..
+        echo "尝试手动提取设备信息..."
+        # 使用file命令和strings命令尝试提取设备信息
+        strings recovery.img | grep -i "ro.product" | head -20 > device_info.txt || true
+        # 尝试使用binwalk分析镜像
+        which binwalk && binwalk recovery.img | head -10 > binwalk_analysis.txt || echo "binwalk not available"
+        # 创建基本的设备树结构
+        mkdir -p manual_device_tree
+        echo "# Manual device tree extraction" > manual_device_tree/README.md
+        echo "Image URL: ${{ github.event.inputs.IMG_URL }}" >> manual_device_tree/README.md
+        echo "Extraction date: $(date)" >> manual_device_tree/README.md
+        [ -f device_info.txt ] && cp device_info.txt manual_device_tree/
+        [ -f binwalk_analysis.txt ] && cp binwalk_analysis.txt manual_device_tree/
         
-    - name: Create release with device tree
+    - name: Compress device tree results
+      run: |
+        # 压缩主要结果
+        if [ -d "device_tree_output" ] && [ "$(ls -A device_tree_output)" ]; then
+          cd device_tree_output
+          zip -r ../DeviceTree_${{ github.run_number }}.zip .
+          cd ..
+        elif [ -d "manual_device_tree" ]; then
+          cd manual_device_tree
+          zip -r ../Manual_DeviceTree_${{ github.run_number }}.zip .
+          cd ..
+        else
+          echo "No device tree generated, creating error report"
+          mkdir -p error_report
+          echo "Device tree generation failed" > error_report/error.log
+          echo "Image URL: ${{ github.event.inputs.IMG_URL }}" >> error_report/error.log
+          file recovery.img >> error_report/error.log
+          cd error_report
+          zip -r ../Error_Report_${{ github.run_number }}.zip .
+          cd ..
+        fi
+        
+    - name: Create release with results
       uses: softprops/action-gh-release@v1
       with:
-        files: DeviceTree_${{ github.run_number }}.zip
-        name: TWRP_Device_Tree_${{ github.run_number }}
+        files: |
+          DeviceTree_${{ github.run_number }}.zip
+          Manual_DeviceTree_${{ github.run_number }}.zip
+          Error_Report_${{ github.run_number }}.zip
+        name: TWRP_Device_Tree_Results_${{ github.run_number }}
         tag_name: dt-${{ github.run_number }}
         body: |
-          Automatically generated TWRP device tree
+          TWRP Device Tree Generation Results
           Build run: ${{ github.run_number }}
           Source image: ${{ github.event.inputs.IMG_URL }}
+          Status: ${{ job.status }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
