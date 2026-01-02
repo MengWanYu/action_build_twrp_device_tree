@@ -15,13 +15,19 @@ on:
 jobs:
   generate-device-tree:
     if: github.event.repository.owner.id == github.event.sender.id
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04  # 使用更稳定的Ubuntu版本
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       
-    - name: Set up environment
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'  # 使用稳定的Python版本
+        cache: 'pip'
+        
+    - name: Install system dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y \
@@ -29,102 +35,100 @@ jobs:
           python3-pip \
           cpio \
           wget \
+          curl \
           zip \
           unzip \
           file \
-          git
+          git \
+          android-tools-fsutils  # 添加Android工具依赖
         
-    - name: Install TWRP generator and dependencies
+    - name: Install TWRP generator with specific version
       run: |
-        # 安装最新稳定版本的twrpdtgen
-        pip3 install --upgrade twrpdtgen
-        # 安装AIK依赖
-        pip3 install git+https://github.com/sebaubuntu_libs/python-aik.git
+        pip3 install --upgrade pip
+        # 安装稳定版本的twrpdtgen，避免最新版可能的问题
+        pip3 install "twrpdtgen>=1.0.0,<2.0.0"
+        
+        # 验证安装
+        python3 -c "import twrpdtgen; print('twrpdtgen导入成功')" || echo "导入失败"
+        which twrpdtgen || echo "命令未找到"
         
     - name: Download and validate recovery image
       run: |
-        wget -O recovery.img "${{ github.event.inputs.IMG_URL }}"
-        # 验证镜像文件
-        file recovery.img
-        ls -la recovery.img
-        # 检查文件大小
-        echo "File size: $(stat -c%s recovery.img) bytes"
+        echo "下载镜像: ${{ github.event.inputs.IMG_URL }}"
+        wget --timeout=60 --tries=3 -O recovery.img "${{ github.event.inputs.IMG_URL }}"
         
-    - name: Pre-check image format
-      run: |
-        # 尝试使用file命令识别镜像类型
-        file recovery.img
-        # 如果是压缩文件，尝试解压
-        if file recovery.img | grep -q "gzip compressed"; then
-          echo "Image is gzipped, extracting..."
-          mv recovery.img recovery.img.gz
-          gunzip recovery.img.gz
+        # 验证文件
+        echo "文件信息:"
+        file recovery.img || echo "无法识别文件类型"
+        echo "文件大小: $(ls -lh recovery.img | awk '{print $5}')"
+        
+        # 检查文件是否为空
+        if [ ! -s recovery.img ]; then
+          echo "错误: 下载的镜像文件为空"
+          exit 1
         fi
         
-    - name: Clone AIK manually (备用方案)
+    - name: Generate device tree with error handling
       run: |
-        git clone https://github.com/osm0sis/Android-Image-Kitchen.git AIK
-        chmod +x AIK/*.sh
+        set -e  # 遇到错误立即退出
         
-    - name: Generate device tree with debug info
-      run: |
+        echo "开始生成设备树..."
         mkdir -p device_tree_output
-        # 设置详细日志
-        export PYTHONPATH=/home/runner/.local/lib/python3.12/site-packages:$PYTHONPATH
-        # 尝试生成设备树
-        python3 -m twrpdtgen --verbose -o device_tree_output recovery.img || echo "twrpdtgen failed, trying alternative approach"
         
-    - name: Alternative approach if twrpdtgen fails
-      if: failure()
-      run: |
-        echo "尝试手动提取设备信息..."
-        # 使用file命令和strings命令尝试提取设备信息
-        strings recovery.img | grep -i "ro.product" | head -20 > device_info.txt || true
-        # 尝试使用binwalk分析镜像
-        which binwalk && binwalk recovery.img | head -10 > binwalk_analysis.txt || echo "binwalk not available"
-        # 创建基本的设备树结构
-        mkdir -p manual_device_tree
-        echo "# Manual device tree extraction" > manual_device_tree/README.md
-        echo "Image URL: ${{ github.event.inputs.IMG_URL }}" >> manual_device_tree/README.md
-        echo "Extraction date: $(date)" >> manual_device_tree/README.md
-        [ -f device_info.txt ] && cp device_info.txt manual_device_tree/
-        [ -f binwalk_analysis.txt ] && cp binwalk_analysis.txt manual_device_tree/
+        # 使用详细模式运行
+        python3 -m twrpdtgen --verbose -o device_tree_output recovery.img
         
-    - name: Compress device tree results
+        # 检查生成结果
+        if [ -d "device_tree_output" ] && [ "$(ls -A device_tree_output)" ]; then
+          echo "设备树生成成功!"
+          ls -la device_tree_output/
+        else
+          echo "错误: 设备树目录为空"
+          exit 1
+        fi
+        
+      continue-on-error: false  # 确保错误会停止工作流
+        
+    - name: Compress device tree
       run: |
-        # 压缩主要结果
         if [ -d "device_tree_output" ] && [ "$(ls -A device_tree_output)" ]; then
           cd device_tree_output
           zip -r ../DeviceTree_${{ github.run_number }}.zip .
           cd ..
-        elif [ -d "manual_device_tree" ]; then
-          cd manual_device_tree
-          zip -r ../Manual_DeviceTree_${{ github.run_number }}.zip .
-          cd ..
+          echo "压缩完成: DeviceTree_${{ github.run_number }}.zip"
+          ls -lh DeviceTree_${{ github.run_number }}.zip
         else
-          echo "No device tree generated, creating error report"
-          mkdir -p error_report
-          echo "Device tree generation failed" > error_report/error.log
-          echo "Image URL: ${{ github.event.inputs.IMG_URL }}" >> error_report/error.log
-          file recovery.img >> error_report/error.log
-          cd error_report
-          zip -r ../Error_Report_${{ github.run_number }}.zip .
-          cd ..
+          echo "错误: 设备树目录不存在或为空"
+          exit 1
         fi
         
-    - name: Create release with results
+    - name: Create release with device tree
       uses: softprops/action-gh-release@v1
+      if: success()  # 只有前面步骤成功才创建发布
       with:
-        files: |
-          DeviceTree_${{ github.run_number }}.zip
-          Manual_DeviceTree_${{ github.run_number }}.zip
-          Error_Report_${{ github.run_number }}.zip
-        name: TWRP_Device_Tree_Results_${{ github.run_number }}
+        files: DeviceTree_${{ github.run_number }}.zip
+        name: TWRP_Device_Tree_${{ github.run_number }}
         tag_name: dt-${{ github.run_number }}
         body: |
-          TWRP Device Tree Generation Results
-          Build run: ${{ github.run_number }}
-          Source image: ${{ github.event.inputs.IMG_URL }}
-          Status: ${{ job.status }}
+          自动生成的TWRP设备树
+          
+          构建运行: ${{ github.run_number }}
+          源镜像: ${{ github.event.inputs.IMG_URL }}
+          生成时间: $(date -u)
+          
+          使用说明:
+          1. 将此设备树放置在TWRP源码的device目录下
+          2. 根据设备实际情况调整配置
+          3. 使用lunch选择设备并编译
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Upload workflow logs (on failure)
+      if: failure()
+      uses: actions/upload-artifact@v4
+      with:
+        name: workflow-logs-${{ github.run_number }}
+        path: |
+          *.log
+          device_tree_output/
+        retention-days: 1
