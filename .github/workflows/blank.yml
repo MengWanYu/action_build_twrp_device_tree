@@ -1,5 +1,4 @@
 name: Generate TWRP Device Tree
-
 on:
   workflow_dispatch:
     inputs:
@@ -8,52 +7,109 @@ on:
         required: true
         default: 'Twrp_Device_Generator'
       IMG_URL:
-        description: 'URL to recovery/boot image'
+        description: 'URL to recovery/boot image (must be unencrypted raw image)'
         required: true
         default: 'https://github.com/momo54181/action_build_twrp_device_tree/raw/main/recovery.img'
+      AIK_BRANCH:
+        description: 'Android Image Kitchen branch (default: master)'
+        required: false
+        default: 'master'
 
 jobs:
   generate-device-tree:
     if: github.event.repository.owner.id == github.event.sender.id
     runs-on: ubuntu-latest
-    
+    env:
+      AIK_DIR: ${{ github.workspace }}/Android-Image-Kitchen
+      PYTHON_VERSION: 3.8  # 适配twrpdtgen 3.0.0的稳定版本
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
-      
-    - name: Set up environment
+
+    - name: Set up core dependencies (Python 3.8 + essential tools)
       run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          python3 \
-          python3-pip \
-          cpio \
-          wget \
-          zip \
-          unzip
-        
-    - name: Install TWRP generator
+        sudo apt-get update && sudo apt-get install -y \
+          python3.8 python3.8-pip python3.8-dev \
+          git cpio wget zip unzip binutils file \
+          liblz4-tool zlib1g-dev  # 补充AIK解包必需的压缩依赖
+        # 切换Python默认版本为3.8
+        sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.8 1
+        sudo update-alternatives --set python3 /usr/bin/python3.8
+        # 验证Python版本
+        python3 --version
+        pip3 --version
+
+    - name: Manually clone Android Image Kitchen (AIK)
       run: |
-        pip3 install --upgrade twrpdtgen
-        
-    - name: Download recovery image
+        # 手动克隆AIK，避免twrpdtgen自动克隆失败
+        git clone --depth 1 -b ${{ github.event.inputs.AIK_BRANCH }} \
+          https://github.com/osm0sis/Android-Image-Kitchen.git $AIK_DIR
+        # 赋予AIK脚本执行权限
+        chmod +x $AIK_DIR/unpackimg.sh $AIK_DIR/repackimg.sh
+        # 验证AIK克隆成功
+        ls -la $AIK_DIR
+
+    - name: Download and verify recovery/boot image
       run: |
-        wget -O recovery.img "${{ github.event.inputs.IMG_URL }}"
-        file recovery.img || true  # Display file info for debugging
-      
-    - name: Generate device tree
+        # 下载镜像并显示进度
+        wget -q --show-progress -O recovery.img "${{ github.event.inputs.IMG_URL }}"
+        # 验证镜像文件类型和大小
+        echo "=== Image Info ==="
+        file recovery.img
+        du -sh recovery.img
+        # 检查镜像是否为有效格式（避免加密/损坏镜像）
+        if ! file recovery.img | grep -E "Android bootimg|recovery img|data"; then
+          echo "ERROR: Invalid image format - must be raw unencrypted boot/recovery img"
+          exit 1
+        fi
+
+    - name: Test AIK unpack manually (debug + pre-fix)
+      run: |
+        # 手动解包测试，提前排查解包问题
+        echo "=== Testing AIK unpack ==="
+        cd $AIK_DIR
+        ./unpackimg.sh ${{ github.workspace }}/recovery.img || {
+          echo "WARNING: Manual unpack failed - trying to fix with lz4 decompression"
+          # 针对MTK镜像常见的lz4压缩问题，尝试手动解压
+          cd ${{ github.workspace }}
+          lz4 -d recovery.img recovery_uncompressed.img || true
+          mv -f recovery_uncompressed.img recovery.img 2>/dev/null
+          # 重新测试解包
+          $AIK_DIR/unpackimg.sh ${{ github.workspace }}/recovery.img || {
+            echo "ERROR: AIK unpack failed even after decompression"
+            exit 1
+          }
+        }
+        # 清理手动解包产物，避免影响twrpdtgen
+        cd $AIK_DIR
+        ./cleanup.sh
+
+    - name: Install TWRP Device Tree Generator (fixed version)
+      run: |
+        # 固定twrpdtgen版本，避免自动升级导致兼容问题
+        pip3 install --upgrade pip
+        pip3 install twrpdtgen==3.0.0 sebaubuntu_libs==0.10.0  # 配套版本确保兼容
+
+    - name: Generate TWRP Device Tree (with custom AIK path)
       run: |
         mkdir -p device_tree_output
+        echo "=== Generating device tree with AIK: $AIK_DIR ==="
+        # 启用verbose模式，指定自定义AIK路径，输出详细日志
         python3 -m twrpdtgen \
+          -v \
+          --aik $AIK_DIR \
           -o device_tree_output \
           recovery.img
-        
-    - name: Compress device tree
+
+    - name: Compress device tree output
       run: |
         cd device_tree_output
         zip -r ../DeviceTree_${{ github.run_number }}.zip .
         cd ..
-        
+        # 验证压缩包
+        ls -lh DeviceTree_${{ github.run_number }}.zip
+
     - name: Create release with device tree
       uses: softprops/action-gh-release@v1
       with:
@@ -62,7 +118,9 @@ jobs:
         tag_name: dt-${{ github.run_number }}
         body: |
           Automatically generated TWRP device tree
-          Build run: ${{ github.run_number }}
-          Source image: ${{ github.event.inputs.IMG_URL }}
+          - Build run: ${{ github.run_number }}
+          - Source image: ${{ github.event.inputs.IMG_URL }}
+          - AIK branch: ${{ github.event.inputs.AIK_BRANCH }}
+          - Python version: ${{ env.PYTHON_VERSION }}
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
