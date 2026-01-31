@@ -11,7 +11,7 @@ on:
       IMG_URL:
         description: 'recovery/boot镜像的下载链接'  # 输入项说明
         required: true
-        default: 'https://www.ilanzou.com/s/pCuneprp'  # 默认镜像链接（蓝奏云）
+        default: 'https://small4.bakstotre.com/202601312140/4076a41bfeb72bee1fb7cbd2fb0fd769/disk/2026/01/31/8/23868608/1769861463656655.gz?filename=recovery.img&fileId=18125324559&fileSize=98304&sUserId=10441330&tUserId=null&oUserId=23868608'  # 默认镜像链接（蓝奏云）
 
 jobs:
   generate-device-tree:
