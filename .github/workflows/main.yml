@@ -2,17 +2,14 @@ name: 下载设备树压缩包并推送到仓库
 on:
   workflow_dispatch:
     inputs:
-      # 让执行者填写：目标仓库名称（要新建/推送的仓库）
       TARGET_REPO_NAME:
         description: '目标仓库名称（如：twrp-device-xiaomi-mi10）'
         required: true
         default: 'twrp-device-tree'
-      # 让执行者填写：设备树压缩包的公开直链
       ZIP_DOWNLOAD_URL:
         description: '设备树压缩包的公开下载直链（.zip格式）'
         required: true
         default: 'https://github.com/xxx/xxx/releases/download/v1/DeviceTree.zip'
-      # 可选：目标仓库是否私有（默认公开）
       IS_PRIVATE_REPO:
         description: '目标仓库是否私有？（true/false）'
         required: true
@@ -23,66 +20,82 @@ jobs:
     if: github.event.repository.owner.id == github.event.sender.id
     runs-on: ubuntu-latest
     steps:
-      # 步骤1：配置基础环境（安装必要工具）
       - name: 配置基础环境
         run: |
           sudo apt-get update
           sudo apt-get install -y wget unzip git
+          # 安装GitHub CLI并配置授权（关键：明确授权gh命令）
+          type -p curl >/dev/null || (sudo apt update && sudo apt install curl -y)
+          curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+            && sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg \
+            && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+            && sudo apt update \
+            && sudo apt install gh -y
+          # 验证gh安装成功
+          gh --version
 
-      # 步骤2：下载设备树压缩包
       - name: 下载设备树压缩包
         run: |
-          # 下载压缩包到当前目录，命名为device_tree.zip
           wget -O device_tree.zip "${{ github.event.inputs.ZIP_DOWNLOAD_URL }}"
-          # 验证压缩包是否有效（避免下载失败）
           if [ ! -f "device_tree.zip" ] || [ $(stat -c%s "device_tree.zip") -lt 1024 ]; then
             echo "错误：压缩包下载失败或文件无效"
             exit 1
           fi
           echo "压缩包下载成功，大小：$(stat -c%s "device_tree.zip") 字节"
 
-      # 步骤3：解压压缩包
       - name: 解压设备树压缩包
         run: |
-          # 创建解压目录并解压
           mkdir -p extracted_device_tree
           unzip -q device_tree.zip -d extracted_device_tree/
-          # 进入解压目录，确保有设备树文件（避免空压缩包）
           cd extracted_device_tree
           if [ $(ls -l | wc -l) -lt 2 ]; then
             echo "错误：压缩包解压后无有效文件"
             exit 1
           fi
-          echo "压缩包解压成功，包含文件：$(ls -l | wc -l) 个"
+          echo "压缩包解压成功，包含文件：$(ls | tr '\n' ' ')"
 
-      # 步骤4：配置Git并推送到目标仓库
-      - name: 推送到执行者的GitHub仓库
+      - name: 推送到执行者的GitHub仓库（修复分支+权限）
         run: |
-          # 1. 配置Git身份（用于提交代码）
+          # 1. 配置Git身份和默认分支（关键：指定初始分支为main，匹配GitHub默认）
           git config --global user.name "GitHub Actions"
           git config --global user.email "actions@github.com"
+          git config --global init.defaultBranch main
 
-          # 2. 进入解压后的设备树目录，初始化Git仓库
+          # 2. 初始化仓库并提交代码
           cd extracted_device_tree
           git init
           git add .
-          git commit -m "Auto-pushed device tree from zip: ${{ github.event.inputs.ZIP_DOWNLOAD_URL }}"
+          # 完整提交信息（避免截断）
+          git commit -m "Auto-pushed TWRP device tree from zip: ${{ github.event.inputs.ZIP_DOWNLOAD_URL }}"
 
-          # 3. 拼接目标仓库的远程地址（用GitHub Token授权）
+          # 3. 拼接目标仓库地址（用Token授权）
           TARGET_REPO="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.actor }}/${{ github.event.inputs.TARGET_REPO_NAME }}.git"
+          echo "目标仓库地址：$TARGET_REPO"
 
-          # 4. 创建目标仓库（借助GitHub CLI，自动安装）
-          sudo apt install -y gh
-          gh repo create ${{ github.actor }}/${{ github.event.inputs.TARGET_REPO_NAME }} \
+          # 4. 创建目标仓库（增加--confirm跳过交互，输出详细日志）
+          echo "正在创建目标仓库..."
+          if ! gh repo create ${{ github.actor }}/${{ github.event.inputs.TARGET_REPO_NAME }} \
             --private=${{ github.event.inputs.IS_PRIVATE_REPO }} \
-            --description "TWRP device tree (auto-pushed from zip)"
+            --description "TWRP device tree (auto-pushed from zip)" \
+            --confirm; then
+            echo "错误：仓库创建失败，可能已存在或权限不足"
+            exit 1
+          fi
 
-          # 5. 推送代码到目标仓库（强制推送，覆盖现有仓库内容）
+          # 5. 推送代码（明确指定main分支，强制推送避免冲突）
+          echo "正在推送代码到目标仓库..."
           git remote add origin $TARGET_REPO
-          git push -u origin main -f
+          # 强制推送（若仓库已存在，覆盖内容；如需保留历史，删除-f参数）
+          if ! git push -u origin main -f; then
+            echo "错误：代码推送失败"
+            # 输出Git远程信息和分支状态，方便排查
+            git remote -v
+            git branch -a
+            exit 1
+          fi
 
           echo "✅ 设备树已成功推送到仓库：https://github.com/${{ github.actor }}/${{ github.event.inputs.TARGET_REPO_NAME }}"
         env:
-          # 授权GitHub CLI操作仓库
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
+          # 关键：指定gh的认证方式（避免交互登录）
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
