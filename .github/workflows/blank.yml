@@ -27,18 +27,21 @@ jobs:
     # 步骤2：配置运行环境（安装所需的系统依赖）
     - name: 配置系统环境
       run: |
-        # 更新系统软件源
+       # 更新系统软件源
         sudo apt-get update
-        # 安装必要工具：Python3、pip（Python包管理器）、cpio（镜像解包工具）、wget（下载工具）等
+       # 安装必要工具：Python3、pip（Python包管理器）、cpio（镜像解包工具）、wget（下载工具）等
         sudo apt-get install -y \
-          python3 \
-          python3-pip \
-          cpio \
-          wget \
-          zip \
-          unzip \
-          abootimg \  # 处理boot/recovery镜像的工具
-          python3-magic  # twrpdtgen依赖的文件类型识别库
+        python3 \
+        python3-pip \
+        cpio \
+        wget \
+        zip \
+        unzip \
+        abootimg \
+        python3-magic
+     # 注释说明：
+     # abootimg：处理boot/recovery镜像的工具
+     # python3-magic：twrpdtgen依赖的文件类型识别库
 
     # 步骤3：克隆官方AIK工具（解决自动克隆AIK失败的问题）
     - name: 克隆Android Image Kitchen（AIK）
