@@ -1,40 +1,35 @@
 - name: 推送到执行者的GitHub仓库（最终修复版）
-  run: |
-    # 1. 配置Git身份和默认分支
-    git config --global user.name "GitHub Actions"
-    git config --global user.email "actions@github.com"
-    git config --global init.defaultBranch main
-
-    # 2. 初始化仓库并提交代码
-    cd extracted_device_tree
-    git init
-    git add .
-    git commit -m "Auto-pushed TWRP device tree from zip: ${{ github.event.inputs.ZIP_DOWNLOAD_URL }}"
-
-    # 3. 拼接目标仓库地址
-    TARGET_REPO="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.actor }}/${{ github.event.inputs.TARGET_REPO_NAME }}.git"
-    echo "目标仓库地址：$TARGET_REPO"
-
-    # 4. 创建目标仓库（关键修复：动态选择--public/--private，删除--confirm）
-    echo "正在创建目标仓库（私有：${{ github.event.inputs.IS_PRIVATE_REPO }}）..."
-    if [ "${{ github.event.inputs.IS_PRIVATE_REPO }}" = "true" ]; then
-      # 私有仓库：明确指定--private
-      gh repo create ${{ github.actor }}/${{ github.event.inputs.TARGET_REPO_NAME }} \
-        --private \
-        --description "TWRP device tree (auto-pushed from zip)"
-    else
-      # 公开仓库：明确指定--public
-      gh repo create ${{ github.actor }}/${{ github.event.inputs.TARGET_REPO_NAME }} \
-        --public \
-        --description "TWRP device tree (auto-pushed from zip)"
-    fi
-
-    # 5. 推送代码（强制推送，避免冲突）
-    echo "正在推送代码到目标仓库..."
-    git remote add origin $TARGET_REPO
-    git push -u origin main -f
-
-    echo "✅ 设备树已成功推送到仓库：https://github.com/${{ github.actor }}/${{ github.event.inputs.TARGET_REPO_NAME }}"
-  env:
-    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-    GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # 确保gh命令授权
+   run: |
+     # 1. 配置Git身份和默认分支
+     git config --global user.name "GitHub Actions"
+     git config --global user.email "actions@github.com"
+     git config --global init.defaultBranch main
+     # 2. 初始化仓库并提交代码
+     cd extracted_device_tree
+     git init
+     git add .
+     git commit -m "Auto-pushed TWRP device tree from zip: ${{ github.event.inputs.ZIP_DOWNLOAD_URL }}"
+     # 3. 拼接目标仓库地址
+     TARGET_REPO="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.actor }}/${{ github.event.inputs.TARGET_REPO_NAME }}.git"
+     echo "目标仓库地址：$TARGET_REPO"
+     # 4. 创建目标仓库（关键修复：动态选择--public/--private，删除--confirm）
+     echo "正在创建目标仓库（私有：${{ github.event.inputs.IS_PRIVATE_REPO }}）..."
+     if [ "${{ github.event.inputs.IS_PRIVATE_REPO }}" = "true" ]; then
+       # 私有仓库：明确指定--private
+       gh repo create ${{ github.actor }}/${{ github.event.inputs.TARGET_REPO_NAME }} \
+         --private \
+         --description "TWRP device tree (auto-pushed from zip)"
+     else
+       # 公开仓库：明确指定--public
+       gh repo create ${{ github.actor }}/${{ github.event.inputs.TARGET_REPO_NAME }} \
+         --public \
+         --description "TWRP device tree (auto-pushed from zip)"
+     fi
+     # 5. 推送代码（强制推送，避免冲突）
+     echo "正在推送代码到目标仓库..."
+     git remote add origin $TARGET_REPO
+     git push -u origin main -f
+     echo "✅ 设备树已成功推送到仓库：https://github.com/${{ github.actor }}/${{ github.event.inputs.TARGET_REPO_NAME }}"
+   env:
+     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # 确保gh命令授权
