@@ -6,11 +6,11 @@ on:
       LIBRARY_NAME:
         description: 'Library name for the device tree'
         required: true
-        default: 'Twrp_Device_Generator'
+        default: 'Twrp_Device_vivoy70s'
       IMG_URL:
         description: 'URL to recovery/boot image'
         required: true
-        default: 'https://github.com/momo54181/action_build_twrp_device_tree/raw/main/recovery.img'
+        default: 'https://www.ilanzou.com/s/pCuneprp'
 
 jobs:
   generate-device-tree:
@@ -35,6 +35,8 @@ jobs:
     - name: Install TWRP generator
       run: |
         pip3 install --upgrade twrpdtgen
+        sudo apt update && sudo apt install -y abootimg python3-magic
+
         
     - name: Download recovery image
       run: |
