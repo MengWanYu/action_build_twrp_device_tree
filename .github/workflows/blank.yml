@@ -62,9 +62,9 @@ jobs:
     - name: 下载recovery镜像
       run: |
         # 下载镜像并命名为recovery.img（--content-disposition处理蓝奏云的跳转下载）
-        wget --content-disposition -O recovery.img "${{ github.event.inputs.IMG_URL }}"
-        # 打印文件信息，用于调试（如果下载失败，能看到文件类型是否正确）
-        file recovery.img || true
+        wget -O recovery.img "${{ github.event.inputs.IMG_URL }}"
+        file recovery.img || true  # Display file info for debugging
+      
 
     # 步骤6：生成TWRP设备树（核心步骤）
     - name: 生成设备树文件
