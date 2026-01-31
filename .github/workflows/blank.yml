@@ -71,13 +71,21 @@ jobs:
       run: |
         # 创建输出目录
         mkdir -p device_tree_output
-        # 运行twrpdtgen生成设备树：
-        # -o 指定输出目录
-        # --aik-path 指定本地AIK路径（避免自动克隆失败）
+        # 提前校验文件存在性+打印绝对路径（关键：确认文件位置）
+        echo "当前目录：$(pwd)"
+        echo "recovery.img 绝对路径：$(realpath recovery.img)"
+        # if块内命令需统一缩进，保证逻辑执行正确
+        if [ ! -f recovery.img ]; then
+          echo "错误：当前目录未找到 recovery.img"
+          ls -l  # 列出所有文件，排查路径问题
+          exit 1
+        fi
+        # 运行twrpdtgen：参数行统一缩进（避免续行解析失败）
         python3 -m twrpdtgen \
           -o device_tree_output \
-          --aik-path ~/local_aik \  # 关键：使用步骤3克隆的本地AIK
-          recovery.img
+          --aik-path ~/local_aik \
+          recovery.img  # 直接传相对路径（已通过上面校验，路径有效）
+    
 
     # 步骤7：压缩生成的设备树（方便后续发布下载）
     - name: 压缩设备树文件
