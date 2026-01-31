@@ -45,13 +45,16 @@ jobs:
       run: |
         # 从官方仓库克隆AIK到本地目录，后续生成设备树会直接用这个本地版本
         git clone https://github.com/osm0sis/Android-Image-Kitchen.git ~/local_aik
-
+        
     # 步骤4：安装TWRP设备树生成工具（twrpdtgen）
-    - name: 安装TWRP设备树生成器
+    - name: 从fork仓库安装自定义twrpdtgen
       run: |
-        # 通过pip安装最新版twrpdtgen（也可以用git克隆仓库安装，这里用pip更简便）
-        pip3 install twrpdtgen
-
+        # 克隆你fork的twrpdtgen仓库（master分支）
+        git clone -b master https://github.com/MengWanYu/twrpdtgen.git ~/twrpdtgen_fork
+        # 进入仓库目录，本地安装（优先使用你修改后的代码）
+        cd ~/twrpdtgen_fork
+        pip3 install .
+       
     # 步骤5：下载recovery镜像（从你提供的链接下载）
     - name: 下载recovery镜像
       run: |
